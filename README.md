@@ -200,9 +200,9 @@ python -m src.deep_learning_state.train --config configs/gru_full.yaml \
 `SEEDS='42 43 44'` 스윕에서 seed 44가 seed 42의 best를 덮어쓰지 않게 하기
 위해서입니다.
 
-`_last.pt`는 매 epoch, `_best.pt`는 검증 BSS 갱신 시 저장합니다.
-model / optimizer / scheduler / GradScaler / epoch / config / git hash가
-전부 들어갑니다.
+`_last.pt`는 매 epoch, `_best.pt`는 **검증 Resolution** 갱신 시 저장합니다.
+model / optimizer / scheduler / GradScaler / epoch / config / git hash와
+`best_epoch` / `selection` / `best_resolution` / `best_bss`가 들어갑니다.
 
 ---
 
@@ -221,6 +221,28 @@ epoch별 궤적은 `{run}_trace.json`.
 `dResolution <= 0` FAIL / `< 10` WEAK / `< 20` INTERESTING / `>= 20` STRONG.
 17차에서 단일 seed의 +8.8이 3-seed 평균에서 +2.8로 사라졌으므로,
 **seed 1개로 판정하지 마세요.**
+
+### best epoch 선택 기준 = validation Resolution (tie-break: BSS)
+
+원래는 BSS 최대 epoch을 골랐는데, 채택 기준(dResolution)과 어긋났습니다.
+`BSS = Resolution - Reliability`이므로 BSS로 고르면 **단지 캘리브레이션이
+좋은 epoch**이 뽑힐 수 있습니다. 그런데 12~14차에서 이미 확인한 게
+"calibration/post-processing은 Resolution을 못 올린다"는 것이었습니다.
+Reliability로 뽑힌 모델은 fold에서만 좋아 보이고 student로 증류할
+**새 정보를 갖고 있지 않습니다.**
+
+Phase A의 질문은 "시퀀스가 v9에 없는 Resolution을 만드는가" 하나뿐이므로,
+epoch 선택도 그 질문으로 합니다. Resolution은 qcut 50분위 통계라 bin이
+붕괴하면 동점이 날 수 있어 tie-break만 BSS입니다.
+
+- `_best.pt`, `results.csv`의 행, 콘솔의 `selected` 줄이 **모두 같은 epoch**
+- `patience`도 같은 기준으로 셉니다 (기준과 조기종료가 어긋나지 않게)
+- **기록되는 지표는 그대로입니다** — BSS · Resolution · Reliability · LogLoss ·
+  AUC · pred_std · corr_with_v9 · dBSS · dResolution · dReliability ·
+  paired · paired_se 전부. 바뀐 건 "어느 epoch을 고르는가"뿐이고
+  v9 metric 계산식과 train/valid 분리 구조는 손대지 않았습니다
+- `results.csv`에 `selection` 컬럼이 추가됩니다. 기준 변경 전 행(BSS로
+  뽑힌 행)은 이 칸이 비어 있으므로 섞어서 비교하지 마세요
 
 ---
 

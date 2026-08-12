@@ -21,6 +21,29 @@ from . import envinfo, models, paths
 from .dataset import ShardDataset, make_loader
 from .metrics import report
 
+# ---------------------------------------------------------------------------
+# WHICH EPOCH IS "BEST"
+#
+# Phase A asks one question: does the pitcher's within-season sequence carry
+# Resolution that v9's single-row features do not already have? So Resolution
+# is what selects the epoch.
+#
+# Selecting on BSS -- which is what this used to do -- answers a different
+# question. BSS = Resolution - Reliability, so a BSS-best epoch can simply be
+# the better-calibrated one. Calibration is exactly what rounds 12-14 already
+# established buys nothing here: post-processing did not move Resolution, and
+# a model picked for Reliability would look good on the fold and carry no new
+# information into a student. Ties (Resolution is a qcut-binned statistic, so
+# exact ties are possible when bins collapse) fall back to BSS.
+#
+# Nothing else changes: every metric is still computed and logged, the v9
+# baseline is still v9's own OOF, and the train/valid split is untouched.
+SELECTION = 'Resolution (tie-break: BSS)'
+
+
+def _sel_key(row):
+    return (row['Resolution'], row['BSS'])
+
 
 def _evaluate(model, loader, dev, n):
     model.eval()
@@ -38,11 +61,17 @@ def _evaluate(model, loader, dev, n):
 
 
 def _save(path, model, opt, sched, scaler, epoch, cfg, best, best_epoch=0):
+    """`best` is the (Resolution, BSS) key of the selected epoch, not a scalar.
+    Both halves are also stored under their own names so a checkpoint says what
+    it was selected on without anyone having to read this file."""
     torch.save(dict(model=model.state_dict(), opt=opt.state_dict(),
                     sched=sched.state_dict() if sched else None,
                     scaler=scaler.state_dict() if scaler else None,
-                    epoch=epoch, config=cfg.to_dict(), best=best,
-                    best_epoch=best_epoch, git=envinfo.git_commit()), path)
+                    epoch=epoch, config=cfg.to_dict(),
+                    best=list(best), best_epoch=best_epoch,
+                    selection=SELECTION,
+                    best_resolution=best[0], best_bss=best[1],
+                    git=envinfo.git_commit()), path)
 
 
 def main(argv=None):
@@ -89,7 +118,7 @@ def main(argv=None):
         print(f'  mixed_precision ignored on {dev.type} (unsupported)')
     scaler = torch.amp.GradScaler('cuda') if amp else None
 
-    start_epoch, best, best_epoch = 1, -1e18, 0
+    start_epoch, best, best_epoch = 1, (-1e18, -1e18), 0
     if cfg.resume:
         ck = torch.load(cfg.resume, map_location=dev, weights_only=False)
         model.load_state_dict(ck['model'])
@@ -97,8 +126,15 @@ def main(argv=None):
         if ck.get('scaler') and scaler:
             scaler.load_state_dict(ck['scaler'])
         start_epoch = ck['epoch'] + 1
-        best = ck.get('best', -1e18)
-        best_epoch = ck.get('best_epoch', ck['epoch'])
+        # a checkpoint written before the criterion changed stores a bare BSS
+        # float; it is not comparable, so start the search over rather than
+        # letting a BSS-selected epoch win a Resolution race it never entered.
+        b = ck.get('best')
+        if isinstance(b, (list, tuple)) and len(b) == 2:
+            best, best_epoch = tuple(b), ck.get('best_epoch', ck['epoch'])
+        elif b is not None:
+            print('  checkpoint predates the Resolution criterion; '
+                  'best-epoch search restarts', flush=True)
         # The scheduler state is deliberately NOT loaded. OneCycleLR stores its
         # own total_steps, so restoring it into a run with a different --epochs
         # overruns the schedule on the first step. Fast-forwarding the fresh
@@ -154,8 +190,9 @@ def main(argv=None):
                   % (ep, train_loss, row['BSS'], row['Resolution'],
                      row['Reliability'], row.get('dResolution', float('nan')),
                      row['train_seconds']), flush=True)
-            if row['BSS'] > best:
-                best, best_epoch = row['BSS'], ep
+            if _sel_key(row) > best:
+                best, best_epoch = _sel_key(row), ep
+                row['selected'] = True
                 _save(ck_dir / f'{tag}_best.pt', model, opt,
                       sched, scaler, ep, cfg, best, best_epoch)
         else:
@@ -167,15 +204,21 @@ def main(argv=None):
             _save(ck_dir / f'{tag}_last.pt', model, opt,
                   sched, scaler, ep, cfg, best, best_epoch)
         # `patience` was declared in the config but never read, so a 20-epoch
-        # run always burned all 20. Counted in EVALUATED epochs, not raw ones.
+        # run always burned all 20. Counted in EVALUATED epochs, not raw ones,
+        # and on the selection criterion so it cannot disagree with it.
         if cfg.patience and best_epoch and ep - best_epoch >= cfg.patience:
-            print(f'  early stop: no BSS improvement for {cfg.patience} '
-                  f'evals (best epoch {best_epoch}, BSS {best:.1f})', flush=True)
+            print(f'  early stop: no Resolution improvement for {cfg.patience} '
+                  f'evals (best epoch {best_epoch}, Res {best[0]:.1f})',
+                  flush=True)
             break
 
     # ---- results ---------------------------------------------------------
+    # The reported row is the SELECTED epoch, same criterion as _best.pt, so
+    # results.csv and the checkpoint can never describe different epochs.
     import pandas as pd
-    last = max((r for r in rows if 'BSS' in r), key=lambda r: r['BSS'])
+    last = max((r for r in rows if 'BSS' in r), key=_sel_key)
+    print(f'\n  selected   epoch {last["epoch"]} by {SELECTION}'
+          f'   Res {last["Resolution"]:.1f}  BSS {last["BSS"]:.1f}', flush=True)
     rec = dict(run=f'{cfg.name}-{envinfo.stamp()}', git_commit=envinfo.git_commit(),
                config=Path(args.config).name, fold=cfg.fold, seed=cfg.seed,
                model=cfg.model, sequence_length=cfg.sequence_length,
@@ -184,14 +227,27 @@ def main(argv=None):
                dataset=envinfo.dataset_version(cfg.fold, cfg.sequence_length),
                train_rows=len(tr), valid_rows=len(va),
                total_seconds=round(time.time() - t_start, 1),
+               selection=SELECTION,
                **{k: last.get(k) for k in
                   ('epoch', 'BSS', 'Resolution', 'Reliability', 'LogLoss',
                    'AUC', 'pred_std', 'corr_with_v9', 'dBSS', 'dResolution',
                    'dReliability', 'paired', 'paired_se')})
     res = out_dir / 'results.csv'
-    pd.DataFrame([rec]).to_csv(res, mode='a', header=not res.exists(), index=False)
+    new = pd.DataFrame([rec])
+    if not res.exists():
+        new.to_csv(res, index=False)
+    else:
+        old = pd.read_csv(res)
+        if list(old.columns) == list(new.columns):
+            new.to_csv(res, mode='a', header=False, index=False)
+        else:
+            # a column was added (`selection`). A blind append would put the
+            # values under the wrong headers for every future row, so migrate
+            # the log once; older rows get NaN where they have no value.
+            pd.concat([old, new], ignore_index=True).to_csv(res, index=False)
     (out_dir / f'{rec["run"]}_trace.json').write_text(
-        json.dumps(dict(config=cfg.to_dict(), env=desc, trace=rows), indent=1,
+        json.dumps(dict(config=cfg.to_dict(), env=desc, selection=SELECTION,
+                        best_epoch=last['epoch'], trace=rows), indent=1,
                    default=float))
     print(f'\n  results -> {res}')
     print(f'  checkpoints -> {ck_dir}')
