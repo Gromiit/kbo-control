@@ -108,11 +108,16 @@ def build_fold(S, L, shard_rows, max_rows=0, force=False):
                + d.pitcher_id.to_numpy(np.int64))
         seq, length = _windows(_steps(d), grp, L)
 
-        dest = paths.SEQ / split / f'S{S}'
+        # L is part of the directory name, not just the manifest. Without it an
+        # L=32 build silently overwrites the L=16 shards in place while
+        # manifest_S{S}_L16.json survives and keeps claiming L=16 -- and the
+        # smoke config (L=16) and the full config (L=32) cannot coexist at all.
+        dest = paths.SEQ / split / f'S{S}_L{L}'
         dest.mkdir(parents=True, exist_ok=True)
-        if force:
-            for f in dest.glob('*.npz'):
-                f.unlink()
+        # always clear: build_fold regenerates every shard, so anything left
+        # from a larger previous build would be read as extra rows.
+        for f in dest.glob('shard_*.npy'):
+            f.unlink()
         n = len(d)
         meta = []
         for i, s in enumerate(range(0, n, shard_rows)):

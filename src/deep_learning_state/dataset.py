@@ -84,7 +84,7 @@ class ShardDataset(Dataset):
     def __init__(self, season, L, split, max_rows=0):
         man = load_manifest(season, L)
         info = man['splits'][split]
-        self.dir = paths.SEQ / split / f'S{season}'
+        self.dir = paths.SEQ / split / f'S{season}_L{L}'
         self.n_shards = len(sorted(self.dir.glob('shard_*_y.npy')))
         if not self.n_shards:
             raise SystemExit(f'no shards in {self.dir}')

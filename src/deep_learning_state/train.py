@@ -37,12 +37,12 @@ def _evaluate(model, loader, dev, n):
     return out[:i]
 
 
-def _save(path, model, opt, sched, scaler, epoch, cfg, best):
+def _save(path, model, opt, sched, scaler, epoch, cfg, best, best_epoch=0):
     torch.save(dict(model=model.state_dict(), opt=opt.state_dict(),
                     sched=sched.state_dict() if sched else None,
                     scaler=scaler.state_dict() if scaler else None,
                     epoch=epoch, config=cfg.to_dict(), best=best,
-                    git=envinfo.git_commit()), path)
+                    best_epoch=best_epoch, git=envinfo.git_commit()), path)
 
 
 def main(argv=None):
@@ -51,6 +51,9 @@ def main(argv=None):
     desc = D.describe(dev)
     paths.ensure_dirs()
 
+    # seed is in the stem: train_colab.sh sweeps seeds sequentially with the
+    # same cfg.name, and without it seed 44 overwrites seed 42's best.pt.
+    tag = f'{cfg.name}_fold{cfg.fold}_s{cfg.seed}'
     ck_dir = Path(cfg.checkpoint_dir or paths.CKPT)
     out_dir = Path(cfg.output_dir or paths.EXP)
     ck_dir.mkdir(parents=True, exist_ok=True)
@@ -86,7 +89,7 @@ def main(argv=None):
         print(f'  mixed_precision ignored on {dev.type} (unsupported)')
     scaler = torch.amp.GradScaler('cuda') if amp else None
 
-    start_epoch, best = 1, -1e18
+    start_epoch, best, best_epoch = 1, -1e18, 0
     if cfg.resume:
         ck = torch.load(cfg.resume, map_location=dev, weights_only=False)
         model.load_state_dict(ck['model'])
@@ -95,6 +98,7 @@ def main(argv=None):
             scaler.load_state_dict(ck['scaler'])
         start_epoch = ck['epoch'] + 1
         best = ck.get('best', -1e18)
+        best_epoch = ck.get('best_epoch', ck['epoch'])
         # The scheduler state is deliberately NOT loaded. OneCycleLR stores its
         # own total_steps, so restoring it into a run with a different --epochs
         # overruns the schedule on the first step. Fast-forwarding the fresh
@@ -151,17 +155,23 @@ def main(argv=None):
                      row['Reliability'], row.get('dResolution', float('nan')),
                      row['train_seconds']), flush=True)
             if row['BSS'] > best:
-                best = row['BSS']
-                _save(ck_dir / f'{cfg.name}_fold{cfg.fold}_best.pt', model, opt,
-                      sched, scaler, ep, cfg, best)
+                best, best_epoch = row['BSS'], ep
+                _save(ck_dir / f'{tag}_best.pt', model, opt,
+                      sched, scaler, ep, cfg, best, best_epoch)
         else:
             print('  ep%-3d loss %.5f  [%.0fs]' % (ep, train_loss,
                                                    row['train_seconds']),
                   flush=True)
         rows.append(row)
         if ep % cfg.save_every == 0:
-            _save(ck_dir / f'{cfg.name}_fold{cfg.fold}_last.pt', model, opt,
-                  sched, scaler, ep, cfg, best)
+            _save(ck_dir / f'{tag}_last.pt', model, opt,
+                  sched, scaler, ep, cfg, best, best_epoch)
+        # `patience` was declared in the config but never read, so a 20-epoch
+        # run always burned all 20. Counted in EVALUATED epochs, not raw ones.
+        if cfg.patience and best_epoch and ep - best_epoch >= cfg.patience:
+            print(f'  early stop: no BSS improvement for {cfg.patience} '
+                  f'evals (best epoch {best_epoch}, BSS {best:.1f})', flush=True)
+            break
 
     # ---- results ---------------------------------------------------------
     import pandas as pd

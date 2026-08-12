@@ -1,0 +1,61 @@
+{
+ "config": {
+  "name": "gru_smoke",
+  "fold": 2024,
+  "seed": 42,
+  "sequence_length": 16,
+  "max_rows": 100000,
+  "shard_rows": 100000,
+  "num_workers": 0,
+  "model": "gru",
+  "hidden_size": 32,
+  "num_layers": 1,
+  "head_hidden": 64,
+  "dropout": 0.1,
+  "batch_size": 512,
+  "learning_rate": 0.001,
+  "weight_decay": 0.01,
+  "epochs": 2,
+  "grad_clip": 5.0,
+  "mixed_precision": false,
+  "patience": 6,
+  "checkpoint_dir": "",
+  "output_dir": "",
+  "resume": "experiments/deep_learning_state/checkpoints/gru_smoke_fold2024_s42_last.pt",
+  "save_every": 1,
+  "eval_every": 1
+ },
+ "env": {
+  "device": "mps",
+  "torch": "2.6.0",
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "python": "3.13.5",
+  "cuda": null,
+  "gpu": "Apple Silicon (MPS)",
+  "vram_gb": "unified",
+  "bf16": false,
+  "ram_gb": 17.2
+ },
+ "trace": [
+  {
+   "epoch": 2,
+   "train_loss": 0.675101149559021,
+   "train_seconds": 4.4,
+   "name": "gru_smoke",
+   "BSS": 296.73045457890845,
+   "Resolution": 455.2784359245563,
+   "Reliability": 155.35974977591354,
+   "LogLoss": 0.691233387428014,
+   "AUC": 0.5357771268649538,
+   "pred_std": 0.04422950700324467,
+   "pred_mean": 0.4773643824324012,
+   "corr_with_v9": 0.7267858218074081,
+   "dBSS": -400.47528932373183,
+   "dResolution": -320.8881180875805,
+   "dReliability": 78.19559794886932,
+   "paired": -404.69863455093383,
+   "paired_se": 45.55076838599313,
+   "sigma": 8.88456219051134
+  }
+ ]
+}

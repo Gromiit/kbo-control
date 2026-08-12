@@ -2,8 +2,9 @@
 # Run once per Colab runtime.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+PY="${PYTHON:-python3}"
 pip -q install -r requirements-colab.txt
-python - <<'PY'
+"$PY" - <<'PYCODE'
 import torch
 print('torch', torch.__version__, '| cuda', torch.version.cuda,
       '| available', torch.cuda.is_available())
@@ -12,5 +13,5 @@ if torch.cuda.is_available():
     print(f'gpu {p.name}  {p.total_memory/1e9:.1f} GB  bf16={torch.cuda.is_bf16_supported()}')
 else:
     raise SystemExit('no CUDA -- switch the runtime to GPU (런타임 > 런타임 유형 변경)')
-PY
+PYCODE
 ls -la data/sequences 2>/dev/null || echo 'NOTE: shards not mounted yet -- see README "데이터 이동"'

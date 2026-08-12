@@ -66,7 +66,7 @@ def audit_season(a, S, L):
                + d.pitcher_id.to_numpy(np.int64))
         seq_ref, len_ref = _windows(_steps(d), grp, L)
 
-        sd = paths.SEQ / split / f'S{S}'
+        sd = paths.SEQ / split / f'S{S}_L{L}'
         ns = len(sorted(sd.glob('shard_*_y.npy')))
         cat = lambda f: np.concatenate(
             [np.load(sd / f'shard_{i:04d}_{f}.npy') for i in range(ns)])
@@ -75,6 +75,8 @@ def audit_season(a, S, L):
 
         a.check(f'3. {split}: shard 순서가 parquet 순서와 일치',
                 bool((rid == d.row_id.to_numpy().astype(str)).all()))
+        a.check(f'3. {split}: shard seq 폭 == manifest L',
+                seq.shape[1] == L, f'{seq.shape[1]} vs {L}')
         a.check(f'3. {split}: window 가 재계산과 비트 일치',
                 bool(np.array_equal(seq, seq_ref)) and bool(np.array_equal(ln, len_ref)))
 
@@ -116,7 +118,7 @@ def audit_season(a, S, L):
 
     # ---- 6: v9 baseline alignment
     if 'p_v9' in va.columns:
-        sd = paths.SEQ / 'valid' / f'S{S}'
+        sd = paths.SEQ / 'valid' / f'S{S}_L{L}'
         ns = len(sorted(sd.glob('shard_*_y.npy')))
         got = np.concatenate(
             [np.load(sd / f'shard_{i:04d}_p_v9.npy') for i in range(ns)])

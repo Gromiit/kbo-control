@@ -40,10 +40,17 @@ class StaticMLP(nn.Module):
 class GRUState(nn.Module):
     """The pitcher's recent pitches, summarised, concatenated with the row.
 
-    The GRU runs over the padded window and the final state is taken at each
-    row's own length, so padded steps never reach the head. Rows with an empty
-    history (first pitch of a pitcher's season) contribute a zero state, which
-    the zero-initialised head turns into no correction at all.
+    make_sequences LEFT-pads: column 0 is the oldest slot and column L-1 is
+    always the pitch immediately before this row. So the state to read is the
+    LAST step, for every row -- reading step `length-1` instead lands inside the
+    padding for any row with a short history (2% of rows at L=16) and hands the
+    head a constant vector. Rows with an empty history (first pitch of a
+    pitcher's season) contribute a zero state, which the zero-initialised head
+    turns into no correction at all.
+
+    The leading zeros do still pass through the GRU for short-history rows. If
+    that turns out to matter, the fix is right-padding plus
+    pack_padded_sequence, not a different gather index.
     """
 
     def __init__(self, n_static, n_channels, hidden=32, num_layers=1,
@@ -57,8 +64,7 @@ class GRUState(nn.Module):
 
     def forward(self, x, seq, length):
         h, _ = self.gru(seq)                                  # B, L, H
-        idx = (length.clamp(min=1) - 1).view(-1, 1, 1).expand(-1, 1, h.size(-1))
-        last = h.gather(1, idx).squeeze(1)
+        last = h[:, -1]                                       # left-padded
         last = torch.where((length > 0).unsqueeze(-1), last,
                            torch.zeros_like(last))
         return self.head(torch.cat([x, self.seq_norm(last)], dim=1))

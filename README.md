@@ -55,7 +55,9 @@ LG Aimers 9/
 │   └── checkpoints/             ← git 제외
 ├── data/                        ← git 전체 제외
 │   ├── folds/                   featurize된 walk-forward fold
-│   └── sequences/{train,valid}/S{season}/shard_*.npz
+│   └── sequences/
+│       ├── manifest_S{season}_L{L}.json
+│       └── {train,valid}/S{season}_L{L}/shard_{i}_{field}.npy
 └── work/                        ← 기존 v9 워크스페이스, 읽기 전용·git 제외
 ```
 
@@ -66,6 +68,16 @@ LG Aimers 9/
 ---
 
 ## Mac workflow
+
+> **인터프리터.** 이 Mac에서 torch가 들어 있는 건
+> `/Library/Frameworks/Python.framework/Versions/3.13/bin/python3` (torch 2.6.0)
+> 하나뿐이고, PATH의 `python3`는 numpy도 없는 homebrew 3.14로 잡힙니다.
+> `scripts/*.sh`는 `$PYTHON`으로 덮어쓸 수 있으니 아래처럼 쓰거나,
+> venv를 하나 만들어 activate 하십시오.
+>
+> ```bash
+> export PYTHON=/Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+> ```
 
 ```bash
 cd "~/Desktop/LG Aimers 9"
@@ -124,7 +136,7 @@ shard는 git에 넣지 않습니다. Mac에서 만들어 Drive로 옮깁니다.
 # Mac
 cd "~/Desktop/LG Aimers 9"
 tar czf /tmp/kbo_seq_S2024_L32.tgz -C data sequences/manifest_S2024_L32.json \
-    sequences/train/S2024 sequences/valid/S2024
+    sequences/train/S2024_L32 sequences/valid/S2024_L32
 # → Google Drive의 MyDrive/kbo/ 에 업로드
 ```
 
@@ -133,7 +145,10 @@ tar czf /tmp/kbo_seq_S2024_L32.tgz -C data sequences/manifest_S2024_L32.json \
 !mkdir -p /content/kbo/data && tar xzf /content/drive/MyDrive/kbo/kbo_seq_S2024_L32.tgz -C /content/kbo/data
 ```
 
-또는 Drive에 `sequences/`를 그대로 두고 심볼릭 링크(노트북 3번 셀).
+**Drive에 심볼릭 링크하지 마세요.** dataset이 `.npy`를 mmap하는데,
+Drive FUSE 위의 mmap은 페이지마다 네트워크 왕복이 되어 40초짜리 epoch을
+수십 분으로 만듭니다. shard는 `/content` 로컬 디스크에 복사하고,
+checkpoint/results만 `KBO_CKPT`/`KBO_EXP`로 Drive에 씁니다(노트북 3번 셀).
 
 **용량 기준** (fold 2024, static 168 + L채널 8, float16):
 L=16 약 1.0GB, L=32 약 1.6GB.
@@ -178,8 +193,12 @@ forward 경로에는 `if cuda:`가 한 줄도 없습니다.
 
 ```bash
 python -m src.deep_learning_state.train --config configs/gru_full.yaml \
-  --resume experiments/deep_learning_state/checkpoints/gru_full_fold2024_last.pt
+  --resume experiments/deep_learning_state/checkpoints/gru_full_fold2024_s42_last.pt
 ```
+
+파일명은 `{name}_fold{fold}_s{seed}_{last,best}.pt` — seed가 들어 있는 건
+`SEEDS='42 43 44'` 스윕에서 seed 44가 seed 42의 best를 덮어쓰지 않게 하기
+위해서입니다.
 
 `_last.pt`는 매 epoch, `_best.pt`는 검증 BSS 갱신 시 저장합니다.
 model / optimizer / scheduler / GradScaler / epoch / config / git hash가
