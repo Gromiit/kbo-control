@@ -1,0 +1,21 @@
+# Mac smoke test -- 100k rows, one epoch. Proves the wiring, not the science.
+name: gru_smoke
+fold: 2024
+seed: 42
+
+sequence_length: 16
+max_rows: 100000        # cap per split
+shard_rows: 100000
+num_workers: 0          # macOS: guarded to <=2 anyway
+
+model: gru
+hidden_size: 32
+num_layers: 1
+head_hidden: 64
+dropout: 0.10
+
+batch_size: 512
+learning_rate: 1.0e-3
+weight_decay: 1.0e-2
+epochs: 1
+mixed_precision: false  # ignored on MPS regardless

@@ -1,0 +1,3 @@
+# torch / pandas / numpy ship with Colab; pinning them causes reinstalls.
+pyyaml>=6.0
+pyarrow>=14.0

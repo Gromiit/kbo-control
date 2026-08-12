@@ -1,0 +1,31 @@
+# --- data: never in git -------------------------------------------------
+data/
+open/
+open.zip
+*.parquet
+*.npz
+*.npy
+*.csv.gz
+
+# --- the v9 workspace: large binaries + the shipped model ---------------
+work/
+규은누님_제공파일/
+규은누님_제공파일 복사본/
+*.pkl
+*.cbm
+*.zip
+
+# --- experiment outputs: keep results.csv, drop the heavy parts ---------
+experiments/**/checkpoints/
+experiments/**/*.pt
+experiments/**/*_preds.npy
+!experiments/**/results.csv
+!experiments/**/*_trace.json
+
+# --- python -------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+env/
+.DS_Store

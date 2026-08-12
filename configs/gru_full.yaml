@@ -1,0 +1,23 @@
+# Colab full training. Still small on purpose -- round 17 showed this data
+# punishes capacity, so hidden_size stays at 32 until a sweep says otherwise.
+name: gru_full
+fold: 2024
+seed: 42
+
+sequence_length: 32
+max_rows: 0             # all rows
+shard_rows: 100000
+num_workers: 2
+
+model: gru
+hidden_size: 32
+num_layers: 1
+head_hidden: 64
+dropout: 0.10
+
+batch_size: 1024        # raise to 2048 on a T4/L4 if VRAM allows
+learning_rate: 1.0e-3
+weight_decay: 1.0e-2
+epochs: 20
+patience: 6
+mixed_precision: true   # CUDA only
