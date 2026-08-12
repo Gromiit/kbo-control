@@ -14,6 +14,8 @@ work/
 *.pkl
 *.cbm
 *.zip
+*.tgz
+*.tar.gz
 
 # --- experiment outputs: keep results.csv, drop the heavy parts ---------
 experiments/**/checkpoints/

@@ -43,7 +43,8 @@ LG Aimers 9/
 │   ├── metrics.py               BSS · Resolution · Reliability · LogLoss · AUC
 │   ├── prepare_data.py          [Mac] walk-forward fold 생성
 │   ├── make_sequences.py        [Mac] 시퀀스 shard 생성
-│   ├── audit.py                 [Mac] leakage 감사 6종
+│   ├── audit.py                 [Mac] leakage 감사 (fold parquet 필요)
+│   ├── check_shards.py          [Mac+Colab] 전송된 shard 트리 검증
 │   ├── dataset.py               shard mmap → CPU → batch → GPU
 │   ├── models.py                GRUState / StaticMLP
 │   └── train.py                 진입점
@@ -133,25 +134,58 @@ python -m src.deep_learning_state.train --config configs/gru_full.yaml --device 
 shard는 git에 넣지 않습니다. Mac에서 만들어 Drive로 옮깁니다.
 
 ```bash
-# Mac
+# Mac -- tarball 하나로 묶어서 올립니다
 cd "~/Desktop/LG Aimers 9"
-tar czf /tmp/kbo_seq_S2024_L32.tgz -C data sequences/manifest_S2024_L32.json \
+COPYFILE_DISABLE=1 tar czf /tmp/kbo_seq_L32.tgz -C data \
+    sequences/manifest_S2023_L32.json sequences/manifest_S2024_L32.json \
+    sequences/train/S2023_L32 sequences/valid/S2023_L32 \
     sequences/train/S2024_L32 sequences/valid/S2024_L32
-# → Google Drive의 MyDrive/kbo/ 에 업로드
+
+# 전송 후 "감사를 통과한 그 바이트"임을 증명할 체크섬 (15 KB)
+python -m src.deep_learning_state.check_shards --seasons 2023,2024 \
+    --sequence-length 32 --sha256 data/sequences/SHA256SUMS_L32.txt
+
+# → 둘 다 Google Drive의 MyDrive/kbo/ 에 업로드
 ```
 
-```python
-# Colab
-!mkdir -p /content/kbo/data && tar xzf /content/drive/MyDrive/kbo/kbo_seq_S2024_L32.tgz -C /content/kbo/data
+Colab은 노트북 3번 셀이 처리합니다. 경로는 하드코딩이 아니라 환경변수:
+
+| 변수 | 기본값 |
+|---|---|
+| `KBO_DATA_ARCHIVE` | `/content/drive/MyDrive/kbo/kbo_seq_L32.tgz` |
+| `KBO_DATA_SHA256` | `/content/drive/MyDrive/kbo/SHA256SUMS_L32.txt` (없으면 건너뜀) |
+
+```bash
+mkdir -p /content/kbo/data
+tar xzf "$KBO_DATA_ARCHIVE" -C /content/kbo/data     # → /content/kbo/data/sequences/...
+python -m src.deep_learning_state.check_shards --seasons 2023,2024 --sequence-length 32
 ```
 
-**Drive에 심볼릭 링크하지 마세요.** dataset이 `.npy`를 mmap하는데,
-Drive FUSE 위의 mmap은 페이지마다 네트워크 왕복이 되어 40초짜리 epoch을
-수십 분으로 만듭니다. shard는 `/content` 로컬 디스크에 복사하고,
-checkpoint/results만 `KBO_CKPT`/`KBO_EXP`로 Drive에 씁니다(노트북 3번 셀).
+**Drive에 심볼릭 링크하거나 Drive에서 mmap하지 마세요.** dataset이 `.npy`를
+mmap하는데, Drive FUSE 위의 mmap은 페이지마다 네트워크 왕복이 되어 40초짜리
+epoch을 수십 분으로 만듭니다. 학습 데이터는 반드시 `/content` 로컬 디스크에
+두고, checkpoint/results만 `KBO_CKPT`/`KBO_EXP`로 Drive에 씁니다.
 
-**용량 기준** (fold 2024, static 168 + L채널 8, float16):
-L=16 약 1.0GB, L=32 약 1.6GB.
+`COPYFILE_DISABLE=1` 없이 macOS `tar`로 묶으면 `._*` AppleDouble 사이드카가
+같이 들어갑니다(파일 수가 2배로 보임). shard glob은 앞이 고정된 패턴이라
+`._shard_...`를 매칭하지 않으므로 **동작에는 영향이 없고** 용량도 30 KB
+수준이지만, 없는 편이 헷갈리지 않습니다.
+
+**용량** (static 168 + L채널 8, float16): L=32 fold 2023 1.0 GB +
+fold 2024 1.2 GB = **2.2 GB**, gzip 후 **198 MB**.
+
+### check_shards.py vs audit.py
+
+`audit.py`(leakage 감사)는 `data/folds/*.parquet`에서 window를 재계산해
+비트 비교하므로 **Mac 전용**입니다. fold parquet 1.5 GB는 업로드하지 않으니
+Colab에서는 돌지 않습니다.
+
+`check_shards.py`는 그 자리를 대신하는 게 아니라 **전송 검증**입니다 —
+inventory(모든 field·shard 수·p_v9는 valid에만), shape, 그리고 shard만으로
+확인 가능한 window 불변식(left-padding 0, `length` == 실제 스텝 수).
+`--sha256`까지 쓰면 Colab의 트리가 Mac에서 감사를 통과한 트리와 바이트 단위로
+같다는 게 증명되므로, 시즌 격리·window 비트 일치·scaler 출처·p_v9-OOF 정렬은
+업로드 전 Mac 감사 결과가 그대로 유효합니다.
 
 ---
 
