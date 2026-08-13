@@ -45,16 +45,38 @@ lg = lambda p: np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-
 sg = lambda z: 1.0 / (1.0 + np.exp(-z))
 
 
-def incumbents():
-    o = pd.read_parquet(REPO / 'work' / 'research' / 'oof_2024.parquet',
-                        columns=['row_id', 'control_success', 'p_A7', 'p_A9',
-                                 'p_Bcat'])
-    a9 = REPO / 'work' / 'strat' / 'v9_a8_2024.npy'
-    if a9.exists():
-        o['p_A9'] = np.load(a9)
+def incumbents(data_dir):
+    """v9's components on the 2024 fold.
+
+    Read from the prepared data parquet first, which already carries p_A7 /
+    p_A9 / p_Bcat / p_v9. That is what lets the gate run on Colab, where work/
+    is deliberately absent -- the experiment must not reach into it. The
+    work/research copy is used only as a fallback when running on the Mac
+    without the prepared archive.
+    """
+    local = Path(data_dir) / 'ftt_2024_va.parquet'
+    if local.exists():
+        o = pd.read_parquet(local, columns=['row_id', 'control_success',
+                                            'p_A7', 'p_A9', 'p_Bcat'])
+        src = f'{local.name} (work/ 미사용)'
+    else:
+        f = REPO / 'work' / 'research' / 'oof_2024.parquet'
+        if not f.exists():
+            raise SystemExit(
+                f'v9 구성요소를 찾을 수 없습니다.\n'
+                f'  기대 위치 1: {local}   (prep_data.py 산출물)\n'
+                f'  기대 위치 2: {f}')
+        o = pd.read_parquet(f, columns=['row_id', 'control_success',
+                                        'p_A7', 'p_A9', 'p_Bcat'])
+        a9 = REPO / 'work' / 'strat' / 'v9_a8_2024.npy'
+        if a9.exists():
+            o['p_A9'] = np.load(a9)
+        src = 'work/research/oof_2024.parquet'
+    if o[['p_A7', 'p_A9', 'p_Bcat']].isna().any().any():
+        raise SystemExit('v9 구성요소에 결측이 있습니다')
     o['p_v9'] = np.clip(0.25 * o.p_A7 + 0.30 * o.p_A9 + 0.45 * o.p_Bcat,
                         1e-3, 1 - 1e-3)
-    return o
+    return o, src
 
 
 def fit_stack(y, cols):
@@ -77,9 +99,10 @@ def main(argv=None):
     ap.add_argument('--oof-dir', default=str(HERE / 'oof'))
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--models', default='A,B,C')
+    ap.add_argument('--data-dir', default=str(HERE / 'data'))
     a = ap.parse_args(argv)
 
-    inc = incumbents()
+    inc, src = incumbents(a.data_dir)
     y = inc.control_success.to_numpy(np.float64)
     comp = {c: inc[c].to_numpy(np.float64) for c in ('p_A7', 'p_A9', 'p_Bcat')}
     v9 = inc.p_v9.to_numpy(np.float64)
@@ -89,6 +112,7 @@ def main(argv=None):
 
     print('=' * 100)
     print(f'  FT-Transformer V0 gate   fold 2024  seed {a.seed}  n {len(inc):,}')
+    print(f'  v9 구성요소 출처  {src}')
     print(f'  v9 blend   BSS {b_bss:.1f}  Res {b_res:.1f}  Rel {b_rel:.1f}')
     print(f'  참조 단독  A7 {decomp(y, comp["p_A7"])[2]:.1f}   '
           f'A9 {decomp(y, comp["p_A9"])[2]:.1f}   '

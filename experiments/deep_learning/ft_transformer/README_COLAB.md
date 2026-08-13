@@ -1,7 +1,24 @@
 # FT-Transformer V0 — Colab 실행 안내
 
+> ## 권장: `FTTransformer_V0_colab.ipynb`
+>
+> **Colab 에서 이 노트북 하나를 열고 위에서 아래로 실행하면 V0 평가까지 끝납니다.**
+> Drive 마운트 → 저장소 → GPU 확인 → 의존성 → 데이터 → 학습 → 게이트 → 결과 저장이
+> 셀 단위로 들어 있고, 각 단계가 실패하면 그 자리에서 멈춥니다.
+>
+> ```
+> experiments/deep_learning/ft_transformer/FTTransformer_V0_colab.ipynb
+> ```
+>
+> 사전 준비는 §1 (Mac 에서 `prep_data.py` 실행 후 `ftt_data.tgz` 를 Drive 에 업로드)
+> 하나뿐입니다. 노트북이 아카이브 sha256 과 payload 를 검사하고 schema 를 출력합니다.
+>
+> 아래 shell runner (`setup_colab.sh` / `run_v0_colab.sh`) 는 **advanced users only**
+> 로 남겨 둡니다 — 노트북과 같은 일을 하지만 셀 단위 확인이 없습니다.
+
 이 문서만 보고 실행할 수 있게 썼습니다. Mac 에서는 데이터 준비만 하고,
 학습은 전부 Colab GPU 에서 합니다.
+
 
 ---
 
@@ -58,7 +75,36 @@ GPU 가 아니면 `setup_colab.sh` 가 즉시 멈춥니다.
 
 ---
 
-## 3. 실행 — 명령 3개
+## 3. 실행
+
+### 권장 — Notebook
+
+Colab 에서 `FTTransformer_V0_colab.ipynb` 를 열고 **위에서 아래로** 실행하십시오.
+GitHub 에서 바로 열 수 있습니다.
+
+```
+File > Open notebook > GitHub > Gromiit/kbo-control
+  experiments/deep_learning/ft_transformer/FTTransformer_V0_colab.ipynb
+```
+
+셀 구성:
+
+| 셀 | 내용 | 실패 시 |
+|---|---|---|
+| 1 | Drive 마운트 | — |
+| 2 | 저장소 clone / `pull --ff-only` | assert 로 파일 확인 |
+| 3 | GPU 확인 | **RuntimeError** — MPS/CPU 학습 차단 |
+| 4 | 의존성 | import 실패 시 중단 |
+| 5 | 데이터 압축 해제 | sha256·payload 검사, schema 출력 |
+| 6 | 모델 설정 확인 (`--help`) | — |
+| 7 | 학습 seed 42 (A/B/C) | 40~90 분 |
+| 8 | 게이트 평가 | `work/` 미사용 |
+| 9 | 판정 (BSS·corr·gap·blend) | — |
+| 10 | `results/` 저장 | 금지 산출물 assert |
+
+### advanced users only — shell runner
+
+노트북과 같은 일을 셀 확인 없이 실행합니다.
 
 ```python
 # (1) 저장소 + Drive
@@ -128,7 +174,9 @@ experiments/deep_learning/ft_transformer/
   oof/ftt_B_s42.parquet
   oof/ftt_C_s42.parquet
   oof/manifest_s42.json      설정 · 파라미터 수 · 행수 · best BSS
-  v0_results_s42.csv         게이트 결과 (게이트를 돌린 경우)
+  v0_results_s42.csv         게이트 결과
+  results/metrics.json       판정 · 임계값 · schema 요약
+  results/gate_report.md     모델별 표와 판정
 ```
 
 게이트 출력에서 볼 것:
@@ -147,20 +195,18 @@ model X
 **`이탈` 값이 판정의 핵심입니다.** BSS 와 corr 을 따로 보면 왜 떨어졌는지
 놓칩니다. +57 이상이어야 게이트 영역에 들어갑니다.
 
-### 게이트를 Colab 에서 못 돌리는 경우
+### 게이트는 Colab 에서 그대로 돕니다
 
-`v0_gate.py` 는 `work/research/oof_2024.parquet` 이 필요합니다. `work/` 는
-Colab 에 올리지 않는 것이 정상이므로, `run_v0_colab.sh` 가 이 경우를 감지해
-건너뜁니다. OOF 3개를 Mac 으로 내려받아 실행하십시오.
+`v0_gate.py` 는 v9 구성요소(`p_A7` / `p_A9` / `p_Bcat`)를 준비된
+`data/ftt_2024_va.parquet` 에서 읽습니다. **`work/` 에 접근하지 않으므로** Colab 에서
+바로 실행됩니다. `work/research/oof_2024.parquet` 은 Mac 에서 아카이브 없이 돌릴 때의
+fallback 으로만 쓰입니다.
+
+결과를 Drive 로 남기려면:
 
 ```python
-# Colab
-!cp -r experiments/deep_learning/ft_transformer/oof /content/drive/MyDrive/kbo/ftt_oof
-```
-
-```bash
-# Mac — oof/ 에 넣은 뒤
-"$PYTHON" experiments/deep_learning/ft_transformer/v0_gate.py --seed 42
+!cp -r experiments/deep_learning/ft_transformer/results /content/drive/MyDrive/kbo/ftt_results
+!cp -r experiments/deep_learning/ft_transformer/oof     /content/drive/MyDrive/kbo/ftt_oof
 ```
 
 ---
@@ -177,6 +223,8 @@ Colab 에 올리지 않는 것이 정상이므로, `run_v0_colab.sh` 가 이 경
 | `row_id 정렬 실패` (게이트) | OOF 와 `oof_2024.parquet` 의 row_id 불일치. 같은 seed·같은 아카이브인지 확인 |
 | 세션 끊김 | 학습 재개 기능이 없습니다. OOF 를 Drive 로 복사해 두고 seed 단위로 다시 실행하십시오 |
 | `MISSING src/deep_learning_state/metrics.py` | `git pull` 이 안 된 상태. `%cd /content/kbo` 후 `!git pull` |
+| 노트북 셀 10 에서 `NameError: TH` | 셀 9 를 건너뛰었습니다. 위에서부터 순서대로 실행하십시오 |
+| `v9 구성요소를 찾을 수 없습니다` | 데이터 셀(5)을 실행하지 않았거나 아카이브가 구버전. Mac 에서 `prep_data.py` 재실행 |
 
 ---
 
