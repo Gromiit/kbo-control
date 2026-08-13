@@ -1,0 +1,202 @@
+# FT-Transformer V0 — Colab 실행 안내
+
+이 문서만 보고 실행할 수 있게 썼습니다. Mac 에서는 데이터 준비만 하고,
+학습은 전부 Colab GPU 에서 합니다.
+
+---
+
+## 0. 이 실험이 묻는 것
+
+v9 를 대체하려는 것이 아닙니다. **v9 와 다른 feature interaction 을 학습하는
+독립 모델이 가능한가**만 봅니다.
+
+17차 MLP 변형 6종이 이 데이터에서 다음 직선 위에 놓였습니다.
+
+```
+BSS = 2052 × corr(v9) − 1051        R² = 0.998
+```
+
+정확도와 탈상관이 1:1 로 교환됩니다. 게이트는 `corr < 0.85` 에서 `BSS ≥ 750`
+을 요구하는데 직선은 그 지점에서 **693.2** 를 예측하므로, 통과하려면
+**직선에서 약 +57 BSS 벗어나야** 합니다. V0 는 attention 이 그 밖에
+착지하는지만 봅니다.
+
+---
+
+## 1. 준비 (Mac, 1회)
+
+```bash
+cd "~/Desktop/LG Aimers 9"
+export PYTHON=/Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+"$PYTHON" experiments/deep_learning/ft_transformer/prep_data.py
+```
+
+`experiments/deep_learning/ft_transformer/ftt_data.tgz` (**약 260 MB**) 가
+생깁니다. 안에는 이것만 들어갑니다.
+
+```
+data/ftt_2024_tr.parquet   1,221,585 행   seasons 2019-2023
+data/ftt_2024_va.parquet     253,507 행   season  2024
+data/schema.json           feature 목록 · 행수 · sha256
+```
+
+스크립트가 압축 전후로 payload 를 검사합니다 — `test.csv`, `work/`, `.pkl`,
+`.cbm`, `.zip`, `submit` 이 들어가면 즉시 실패합니다.
+
+**이 파일을 Google Drive 의 `MyDrive/kbo/` 에 업로드하십시오.**
+
+```
+MyDrive/kbo/ftt_data.tgz
+```
+
+---
+
+## 2. Colab 설정
+
+**런타임 > 런타임 유형 변경 > T4 GPU** 로 바꾸고 런타임을 다시 시작합니다.
+GPU 가 아니면 `setup_colab.sh` 가 즉시 멈춥니다.
+
+---
+
+## 3. 실행 — 명령 3개
+
+```python
+# (1) 저장소 + Drive
+!git clone https://github.com/Gromiit/kbo-control.git /content/kbo 2>/dev/null || (cd /content/kbo && git pull --ff-only)
+from google.colab import drive; drive.mount('/content/drive')
+%cd /content/kbo
+```
+
+```bash
+# (2) 환경 확인 — GPU 없으면 여기서 멈춤
+!bash experiments/deep_learning/ft_transformer/setup_colab.sh
+```
+
+```bash
+# (3) 압축 해제 + 학습 + 평가 + 결과 위치 출력
+!bash experiments/deep_learning/ft_transformer/run_v0_colab.sh
+```
+
+환경변수로 바꿀 수 있습니다.
+
+```bash
+!FTT_ARCHIVE=/content/drive/MyDrive/kbo/ftt_data.tgz SEED=42 MODELS=A,B,C \
+  bash experiments/deep_learning/ft_transformer/run_v0_colab.sh
+```
+
+---
+
+## 4. 예상 시간 (T4 기준)
+
+| 단계 | 시간 |
+|---|---|
+| 압축 해제 | 1~2 분 |
+| Model A (numeric 101, 1.22M 행, 15 epoch) | 15~30 분 |
+| Model B (+ 범주형 4) | 15~30 분 |
+| Model C (492,997 행, 40%) | 6~12 분 |
+| 게이트 평가 | 1 분 |
+| **합계** | **40~90 분** |
+
+`patience 3` 으로 조기 종료하므로 15 epoch 을 다 쓰지 않을 수 있습니다.
+
+---
+
+## 5. 모델 세 갈래
+
+| | 입력 | 출력 | 학습 행 |
+|---|---|---|---|
+| **A** | numeric 101 | `p = sigmoid(f(x))` | 1,221,585 |
+| **B** | numeric 101 + 범주형 4 임베딩 | `p = sigmoid(f(x))` | 1,221,585 |
+| **C** | B 와 같은 몸통 | `p = sigmoid(logit(p_v9) + f(x))` | **492,997 (40%)** |
+
+**C 의 행이 적은 것은 버그가 아닙니다.** C 는 `p_v9` 가 있는 행만 쓸 수 있는데
+v9 OOF 가 2022~2024 에만 존재합니다. A/B 와 직접 비교할 때 반드시 감안하십시오.
+
+C 의 목적은 성능이 아니라 **"v9 의 로짓을 받은 모델이 v9 를 복제하는가,
+아니면 그 위에 resolution 을 더하는가"** 입니다.
+
+타깃은 셋 다 `control_success` 입니다. **residual 타깃은 쓰지 않습니다** —
+17차가 그 경로로 2024 dBSS **−177.0 / −218.0**, corr 0.94~0.996 을 냈습니다.
+
+---
+
+## 6. 결과 확인
+
+```
+experiments/deep_learning/ft_transformer/
+  oof/ftt_A_s42.parquet      row_id, p
+  oof/ftt_B_s42.parquet
+  oof/ftt_C_s42.parquet
+  oof/manifest_s42.json      설정 · 파라미터 수 · 행수 · best BSS
+  v0_results_s42.csv         게이트 결과 (게이트를 돌린 경우)
+```
+
+게이트 출력에서 볼 것:
+
+```
+model X
+  BSS / Resolution / Reliability
+  calibration bias (p − y)
+  corr(v9)  |  A7 / A9 / BCAT
+  frontier 예측 BSS  ->  이탈 ±NN      <-- 여기가 핵심
+  4요소 stacking 상한   3요소 대비 ±NN
+  고정가중 blend  w=0.05 … 0.30
+  GATE  1) BSS>=750  2) corr<=0.95  3) blend>=+30
+```
+
+**`이탈` 값이 판정의 핵심입니다.** BSS 와 corr 을 따로 보면 왜 떨어졌는지
+놓칩니다. +57 이상이어야 게이트 영역에 들어갑니다.
+
+### 게이트를 Colab 에서 못 돌리는 경우
+
+`v0_gate.py` 는 `work/research/oof_2024.parquet` 이 필요합니다. `work/` 는
+Colab 에 올리지 않는 것이 정상이므로, `run_v0_colab.sh` 가 이 경우를 감지해
+건너뜁니다. OOF 3개를 Mac 으로 내려받아 실행하십시오.
+
+```python
+# Colab
+!cp -r experiments/deep_learning/ft_transformer/oof /content/drive/MyDrive/kbo/ftt_oof
+```
+
+```bash
+# Mac — oof/ 에 넣은 뒤
+"$PYTHON" experiments/deep_learning/ft_transformer/v0_gate.py --seed 42
+```
+
+---
+
+## 7. 실패 시 체크
+
+| 증상 | 원인과 조치 |
+|---|---|
+| `torch.cuda.is_available() False` | 런타임 유형이 GPU 가 아님. 변경 후 **런타임 재시작** |
+| `아카이브가 없습니다` | Drive 미마운트 또는 경로 오타. `drive.mount` 후 `!ls /content/drive/MyDrive/kbo/` 확인 |
+| `CUDA 가 필요합니다` | `train_ftt.py` 의 의도된 거부. MPS/CPU 로는 돌리지 않습니다 |
+| `CUDA out of memory` | `--batch 256` 으로 낮추십시오. 기본 512, 토큰 102~106 |
+| `train season leaked into 2024` | 아카이브가 잘못된 fold. Mac 에서 `prep_data.py` 재실행 |
+| `row_id 정렬 실패` (게이트) | OOF 와 `oof_2024.parquet` 의 row_id 불일치. 같은 seed·같은 아카이브인지 확인 |
+| 세션 끊김 | 학습 재개 기능이 없습니다. OOF 를 Drive 로 복사해 두고 seed 단위로 다시 실행하십시오 |
+| `MISSING src/deep_learning_state/metrics.py` | `git pull` 이 안 된 상태. `%cd /content/kbo` 후 `!git pull` |
+
+---
+
+## 8. 하지 않는 것
+
+- `work/submit_v9.zip` 을 열거나 수정하지 않습니다
+- `work/` 아래에 아무것도 만들지 않습니다
+- `models.py` / `train.py` / `dataset.py` 등 기존 pipeline 을 수정하지 않습니다
+- `test.csv` 를 열지 않습니다 — 학습은 `fold_2024_tr`, 예측은 `fold_2024_va`
+- 제출 파일을 만들지 않습니다
+
+---
+
+## 9. V0 이후
+
+게이트 3개를 모두 통과하면 **그때** seed 3개로 확장합니다. 하나라도 떨어지면
+추가 실험 없이 종료하고 `work/submit_v9.zip` 을 유지합니다.
+
+```bash
+# 통과했을 때만
+!SEED=43 bash experiments/deep_learning/ft_transformer/run_v0_colab.sh
+!SEED=44 bash experiments/deep_learning/ft_transformer/run_v0_colab.sh
+```

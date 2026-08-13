@@ -26,8 +26,10 @@ data, and the report has to carry it when comparing C against A and B.
 
     python experiments/deep_learning/ft_transformer/prep_data.py
 """
+import json
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -115,21 +117,72 @@ def slim(fold, kind, feats):
     return out
 
 
+def schema(made, feats):
+    """What the Colab side needs to know without re-deriving anything."""
+    import hashlib
+    out = dict(created=time.strftime('%Y-%m-%d %H:%M:%S'),
+               fold=2024, numeric_features=feats, n_numeric=len(feats),
+               categorical_features=CATS, categorical_source=CAT_SRC,
+               meta_columns=KEEP + ['p_v9', 'p_A7', 'p_A9', 'p_Bcat'],
+               note=('3 of the 4 categoricals are also inside the numeric '
+                     'block; model B gains embedding treatment, not new '
+                     'columns. count_state is derived as balls*3+strikes, '
+                     "v9's own definition."),
+               files={})
+    for f in made:
+        d = pd.read_parquet(f, columns=['season', 'control_success', 'p_v9'])
+        h = hashlib.sha256(f.read_bytes()).hexdigest()
+        out['files'][f.name] = dict(
+            rows=len(d), bytes=f.stat().st_size, sha256=h,
+            seasons=sorted(int(x) for x in d.season.unique()),
+            y_mean=float(d.control_success.mean()),
+            p_v9_rows=int(d.p_v9.notna().sum()))
+    return out
+
+
+FORBIDDEN = ('test.csv', 'work/', '.pkl', '.cbm', '.zip', 'submit')
+
+
+def check_payload(names):
+    """The tarball travels to Drive, so verify what is in it rather than
+    trusting that the right things were added."""
+    bad = [n for n in names if any(f in n for f in FORBIDDEN)]
+    if bad:
+        raise SystemExit(f'tarball 에 금지 항목: {bad}')
+    print(f'  payload 검사: {len(names)}개, 금지 항목 0개 '
+          f'(test.csv / work / .pkl / .cbm / .zip / submit)')
+
+
 def main():
     feats = list(feature_cols())
     OUT.mkdir(parents=True, exist_ok=True)
     print('=' * 88)
     print(f'  FT-Transformer V0 데이터 준비   numeric {len(feats)} + cat {len(CATS)}')
-    print('  test.csv 미사용')
+    print('  test.csv 미사용 · work/ 미포함 · 모델 파일 미포함')
     print('=' * 88)
     made = [slim(2024, k, feats) for k in ('tr', 'va')]
 
+    sc = schema(made, feats)
+    sp = OUT / 'schema.json'
+    sp.write_text(json.dumps(sc, indent=1))
+    print(f'\n  schema -> {sp.name}  '
+          f'(numeric {sc["n_numeric"]}, cat {len(CATS)}, 파일 {len(sc["files"])})')
+
+    members = [f'data/{p.name}' for p in made] + ['data/schema.json']
+    check_payload(members)
+
     tar = HERE / 'ftt_data.tgz'
+    if tar.exists():
+        tar.unlink()
     with tarfile.open(tar, 'w:gz') as t:
-        for p in made:
+        for p in made + [sp]:
             t.add(p, arcname=f'data/{p.name}')
-    print(f'\n  tar -> {tar}  ({tar.stat().st_size/1e6:.1f} MB)')
-    print('  Drive 의 MyDrive/kbo/ 에 올린 뒤 Colab 에서 풀어 쓰십시오.')
+    with tarfile.open(tar) as t:
+        got = [m.name for m in t.getmembers() if m.isfile()]
+    check_payload(got)
+    print(f'  tar -> {tar.name}  ({tar.stat().st_size/1e6:.1f} MB)  멤버 {got}')
+    print(f'\n  다음: {tar.name} 을 Drive 의 MyDrive/kbo/ 에 업로드')
+    print('        Colab 에서는 README_COLAB.md 참조')
     return 0
 
 

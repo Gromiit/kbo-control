@@ -1,0 +1,9 @@
+# Colab 은 torch / numpy / pandas / pyarrow 를 이미 갖고 있습니다.
+# 고정하면 재설치가 일어나 런타임만 느려지므로 하한만 둡니다.
+# setup_colab.sh 가 실제 존재 여부를 확인하고, 없을 때만 이 파일이 필요합니다.
+#
+#   pip install -r experiments/deep_learning/ft_transformer/requirements_colab.txt
+torch>=2.0
+numpy>=1.24
+pandas>=2.0
+pyarrow>=14.0
