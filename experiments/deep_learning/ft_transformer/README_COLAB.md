@@ -10,8 +10,9 @@
 > experiments/deep_learning/ft_transformer/FTTransformer_V0_colab.ipynb
 > ```
 >
-> 사전 준비는 §1 (Mac 에서 `prep_data.py` 실행 후 `ftt_data.tgz` 를 Drive 에 업로드)
-> 하나뿐입니다. 노트북이 아카이브 sha256 과 payload 를 검사하고 schema 를 출력합니다.
+> 사전 준비는 §2 (Mac 에서 `prep_data.py` 실행 후 `ftt_data.tgz` 를 Drive 에 업로드)
+> 하나뿐입니다. 노트북이 §1 의 archive contract — sha256, payload 집합 일치,
+> schema 내용 — 을 전부 검사한 뒤에야 학습으로 넘어갑니다.
 >
 > 아래 shell runner (`setup_colab.sh` / `run_v0_colab.sh`) 는 **advanced users only**
 > 로 남겨 둡니다 — 노트북과 같은 일을 하지만 셀 단위 확인이 없습니다.
@@ -40,7 +41,38 @@ BSS = 2052 × corr(v9) − 1051        R² = 0.998
 
 ---
 
-## 1. 준비 (Mac, 1회)
+## 1. Archive contract
+
+Mac 과 Colab 사이를 건너가는 것은 tarball 하나뿐이므로, **그 안에 무엇이
+있는지가 계약**입니다. 양쪽이 똑같이 검사합니다.
+
+```
+contract  ftt-v0/1
+
+data/ftt_2024_tr.parquet   1,221,585 행   seasons 2019-2023   p_v9 492,997 (40%)
+data/ftt_2024_va.parquet     253,507 행   season  2024        p_v9 253,507 (100%)
+data/schema.json           contract · feature 목록 · 행수 · parquet sha256
+```
+
+**정확히 이 셋이어야 하며 그 외에는 없어야 합니다.** 금지: `test.csv`,
+`work/`, `submit`, `.pkl`, `.cbm`, `.zip`, `checkpoint`, `shard`.
+
+> ### 크기로는 버전을 구분할 수 없습니다
+>
+> `schema.json` 이 없던 구버전 아카이브도 **같은 260.3 MB** 이고 금지항목
+> 검사도 통과합니다. 실제로 그 아카이브가 Drive 에 올라가 Colab 에서
+> `schema.json` 을 읽는 셀에서야 터졌습니다. 그래서 이제 payload 를
+> **집합 일치**로 검사하고, `schema.json` 에 `contract` 버전을 박아 둡니다.
+> 구버전 아카이브는 압축을 풀기 전에 거부됩니다.
+>
+> **노트북은 없는 `schema.json` 을 추정해서 만들지 않습니다.** 잘못된
+> 아카이브로 판정하고 중단합니다 — 40~90분 학습 뒤에 알게 되는 것보다 낫습니다.
+
+---
+
+## 2. 준비 (Mac, 1회)
+
+`prep_data.py` 는 **인자를 받지 않습니다.**
 
 ```bash
 cd "~/Desktop/LG Aimers 9"
@@ -48,34 +80,48 @@ export PYTHON=/Library/Frameworks/Python.framework/Versions/3.13/bin/python3
 "$PYTHON" experiments/deep_learning/ft_transformer/prep_data.py
 ```
 
-`experiments/deep_learning/ft_transformer/ftt_data.tgz` (**약 260 MB**) 가
-생깁니다. 안에는 이것만 들어갑니다.
+한 번 실행하면 생성 → 재-open → payload 검사 → schema 검사 → 금지항목 검사 →
+sha256 출력까지 끝납니다. 마지막에 이런 블록이 나옵니다.
 
 ```
-data/ftt_2024_tr.parquet   1,221,585 행   seasons 2019-2023
-data/ftt_2024_va.parquet     253,507 행   season  2024
-data/schema.json           feature 목록 · 행수 · sha256
+  아카이브  .../ft_transformer/ftt_data.tgz
+  크기      260,261,226 bytes (260.3 MB)
+  sha256    d89b5522451e95e0d3bdfd9d7cc1653cbf4d410fbe62d69e6dad1145753a660a
+  payload   ['data/ftt_2024_tr.parquet', 'data/ftt_2024_va.parquet', 'data/schema.json']
+  schema.json sha256  69d73d20d622a3241beb097ca43f2bae419d9b7a03c8ac551f16099db11c3ca2
 ```
 
-스크립트가 압축 전후로 payload 를 검사합니다 — `test.csv`, `work/`, `.pkl`,
-`.cbm`, `.zip`, `submit` 이 들어가면 즉시 실패합니다.
+**이 sha256 을 적어 두십시오.** 노트북 셀 5 가 같은 값을 출력해야 합니다.
 
-**이 파일을 Google Drive 의 `MyDrive/kbo/` 에 업로드하십시오.**
+아카이브는 `ftt_data.tgz.tmp` 로 먼저 만들고 **검증을 통과한 뒤에만** 교체됩니다.
+중간에 실패하면 임시 파일만 지워지고 기존 아카이브는 그대로 남습니다.
 
-```
-MyDrive/kbo/ftt_data.tgz
+### 기존 archive 교체 절차
+
+크기가 같아 Drive 에서 눈으로 구분할 수 없으므로 **덮어쓰지 말고 지운 뒤
+올리십시오.**
+
+1. Drive 에서 `MyDrive/kbo/ftt_data.tgz` 를 **삭제** (휴지통도 비우기 — 동명
+   파일이 두 개 남으면 Colab 이 어느 쪽을 보는지 알 수 없습니다)
+2. 새 `ftt_data.tgz` 를 `MyDrive/kbo/` 에 업로드하고 동기화 완료까지 대기
+3. Colab 런타임 **재시작** 후 노트북을 **셀 1 부터** 다시 실행
+4. 셀 5 의 `sha256` 이 위 값과 같은지, `payload` 가 세 파일인지 확인
+5. 이미 풀린 구버전이 남아 있으면 먼저 지우기
+
+```python
+!rm -rf /content/kbo/experiments/deep_learning/ft_transformer/data
 ```
 
 ---
 
-## 2. Colab 설정
+## 3. Colab 설정
 
 **런타임 > 런타임 유형 변경 > T4 GPU** 로 바꾸고 런타임을 다시 시작합니다.
 GPU 가 아니면 `setup_colab.sh` 가 즉시 멈춥니다.
 
 ---
 
-## 3. 실행
+## 4. 실행
 
 ### 권장 — Notebook
 
@@ -95,7 +141,7 @@ File > Open notebook > GitHub > Gromiit/kbo-control
 | 2 | 저장소 clone / `pull --ff-only` | assert 로 파일 확인 |
 | 3 | GPU 확인 | **RuntimeError** — MPS/CPU 학습 차단 |
 | 4 | 의존성 | import 실패 시 중단 |
-| 5 | 데이터 압축 해제 | sha256·payload 검사, schema 출력 |
+| 5 | 데이터 + **계약 검증** | sha256 · payload 집합 일치 · schema · 행수 · 누수 |
 | 6 | 모델 설정 확인 (`--help`) | — |
 | 7 | 학습 seed 42 (A/B/C) | 40~90 분 |
 | 8 | 게이트 평가 | `work/` 미사용 |
@@ -132,7 +178,7 @@ from google.colab import drive; drive.mount('/content/drive')
 
 ---
 
-## 4. 예상 시간 (T4 기준)
+## 5. 예상 시간 (T4 기준)
 
 | 단계 | 시간 |
 |---|---|
@@ -147,7 +193,7 @@ from google.colab import drive; drive.mount('/content/drive')
 
 ---
 
-## 5. 모델 세 갈래
+## 6. 모델 세 갈래
 
 | | 입력 | 출력 | 학습 행 |
 |---|---|---|---|
@@ -166,7 +212,7 @@ C 의 목적은 성능이 아니라 **"v9 의 로짓을 받은 모델이 v9 를 
 
 ---
 
-## 6. 결과 확인
+## 7. 결과 확인
 
 ```
 experiments/deep_learning/ft_transformer/
@@ -211,7 +257,7 @@ fallback 으로만 쓰입니다.
 
 ---
 
-## 7. 실패 시 체크
+## 8. 실패 시 체크
 
 | 증상 | 원인과 조치 |
 |---|---|
@@ -223,12 +269,16 @@ fallback 으로만 쓰입니다.
 | `row_id 정렬 실패` (게이트) | OOF 와 `oof_2024.parquet` 의 row_id 불일치. 같은 seed·같은 아카이브인지 확인 |
 | 세션 끊김 | 학습 재개 기능이 없습니다. OOF 를 Drive 로 복사해 두고 seed 단위로 다시 실행하십시오 |
 | `MISSING src/deep_learning_state/metrics.py` | `git pull` 이 안 된 상태. `%cd /content/kbo` 후 `!git pull` |
+| **`payload 가 계약과 다릅니다 … 누락 ['data/schema.json']`** | **구버전 아카이브입니다.** 크기가 같아 구분되지 않습니다. §2 의 교체 절차대로 Drive 파일을 지우고 새로 만든 것을 올리십시오 |
+| `contract … != ftt-v0/1` | 아카이브와 코드 버전 불일치. `git pull` 후 Mac 에서 `prep_data.py` 재실행 |
+| `sha256 불일치` (parquet) | Drive 업로드가 중간에 끊겼습니다. 지우고 다시 올린 뒤 런타임 재시작 |
+| 셀 5 sha256 이 §2 출력과 다름 | Drive 에 구버전이 남아 있습니다. 동명 파일 중복 여부 확인 |
 | 노트북 셀 10 에서 `NameError: TH` | 셀 9 를 건너뛰었습니다. 위에서부터 순서대로 실행하십시오 |
 | `v9 구성요소를 찾을 수 없습니다` | 데이터 셀(5)을 실행하지 않았거나 아카이브가 구버전. Mac 에서 `prep_data.py` 재실행 |
 
 ---
 
-## 8. 하지 않는 것
+## 9. 하지 않는 것
 
 - `work/submit_v9.zip` 을 열거나 수정하지 않습니다
 - `work/` 아래에 아무것도 만들지 않습니다
@@ -238,7 +288,7 @@ fallback 으로만 쓰입니다.
 
 ---
 
-## 9. V0 이후
+## 10. V0 이후
 
 게이트 3개를 모두 통과하면 **그때** seed 3개로 확장합니다. 하나라도 떨어지면
 추가 실험 없이 종료하고 `work/submit_v9.zip` 을 유지합니다.
